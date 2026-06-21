@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
+import Papa from "papaparse";
 
 interface IngestPanelProps {
   color: string;
@@ -289,15 +290,8 @@ export default function IngestPanel({ color, mode, onIngest }: IngestPanelProps)
 }
 
 function parseCSV(text: string): any[] {
-  const lines = text.split("\n").filter((l) => l.trim());
-  if (lines.length < 2) return [];
-  const headers = lines[0].split(",").map((h) => h.trim().toLowerCase());
-  const entries: any[] = [];
-  for (let i = 1; i < lines.length; i++) {
-    const values = lines[i].split(",").map((v) => v.trim());
-    const entry: Record<string, string> = {};
-    headers.forEach((h, j) => { entry[h] = values[j] || ""; });
-    if (entry.content || entry.message || entry.text) entries.push(entry);
-  }
-  return entries;
+  const result = Papa.parse(text, { header: true, skipEmptyLines: true });
+  return (result.data as any[]).filter(
+    (e) => e.content || e.message || e.text
+  );
 }

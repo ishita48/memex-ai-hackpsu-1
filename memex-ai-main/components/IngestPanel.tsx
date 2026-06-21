@@ -73,7 +73,13 @@ export default function IngestPanel({ color, mode, onIngest }: IngestPanelProps)
       if (commit.trim()) metadata.commit = commit.trim();
       if (service.trim()) metadata.service = service.trim();
       if (extraMeta.trim()) {
-        try { Object.assign(metadata, JSON.parse(extraMeta.trim())); } catch {}
+        try {
+          const allowed = ['tags', 'team', 'environment', 'region'];
+          const parsed = JSON.parse(extraMeta.trim());
+          for (const key of allowed) {
+            if (key in parsed) metadata[key] = String(parsed[key]);
+          }
+        } catch {}
       }
 
       const fullContent = `${title.trim()}\n\n${content.trim()}`;

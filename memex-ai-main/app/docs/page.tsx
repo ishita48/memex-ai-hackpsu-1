@@ -1,6 +1,23 @@
 "use client";
 
+import { useAuth } from "@clerk/nextjs";
+import { useRouter } from "next/navigation";
+import { useEffect } from "react";
+
 export default function ApiDocsPage() {
+  const { isLoaded, isSignedIn } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (isLoaded && !isSignedIn) {
+      router.replace("/sign-in");
+    }
+  }, [isLoaded, isSignedIn, router]);
+
+  if (!isLoaded || !isSignedIn) {
+    return null;
+  }
+
   return (
     <div className="min-h-screen bg-[#08080a] text-[#e0e0e5] font-mono p-8 max-w-4xl mx-auto">
       <style>{`@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap');`}</style>

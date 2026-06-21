@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAlerts, acknowledgeAlert } from "@/lib/memory";
+import { validateApiKey } from "@/lib/api-auth";
 
 export async function GET(req: NextRequest) {
+  const auth = await validateApiKey(req);
+  if (auth.error) return auth.error;
+
   try {
     const { searchParams } = new URL(req.url);
     const unread = searchParams.get("unread") === "true";
@@ -13,6 +17,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
+  const auth = await validateApiKey(req);
+  if (auth.error) return auth.error;
+
   try {
     const { id } = await req.json();
     if (!id) {

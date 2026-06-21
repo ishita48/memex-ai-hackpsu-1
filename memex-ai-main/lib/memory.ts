@@ -140,6 +140,20 @@ export async function query(
     })
     .sort((a: any, b: any) => b.similarity - a.similarity);
 
+  // Sanitize the question by truncating and stripping known injection patterns
+  const sanitizedQuestion = question.slice(0, 500).replace(/[<>]/g, '');
+
+  // Limit and sanitize each retrieved memory's content field before injection
+  const sanitizedResults = reranked.slice(0, 5).map((r: any) => ({
+    id: r.id,
+    type: r.type,
+    source: r.source,
+    // Truncate and mark as data, not instructions
+    content: '[DATA]:' + String(r.content).slice(0, 500),
+    created_at: r.created_at,
+    similarity: r.similarity,
+  }));
+
   const reasoning = await openai.chat.completions.create({
     model: "gpt-4o-mini",
     max_tokens: 500,
@@ -157,8 +171,8 @@ Be concrete and technical. Reference specific services, commits, metrics, and ti
       },
       {
         role: "user",
-        content: `Question: ${question}\n\nRetrieved (${reranked.length} results):\n${JSON.stringify(
-          reranked.slice(0, 5),
+        content: `Question: ${sanitizedQuestion}\n\nRetrieved (${sanitizedResults.length} results):\n${JSON.stringify(
+          sanitizedResults,
           null,
           2
         )}`,

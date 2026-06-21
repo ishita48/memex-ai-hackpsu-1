@@ -1,5 +1,6 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { ingest } from "@/lib/memory";
+import { validateApiKey } from "@/lib/api-auth";
 
 // ─── SEED DATA ─────────────────────────────────────────────────
 // These are the 15 preloaded memories across all 3 sponsor modes.
@@ -221,7 +222,10 @@ const SEED_DATA = [
 ];
 
 // ─── API ROUTE (hit /api/seed to populate) ─────────────────────
-export async function POST() {
+export async function POST(req: NextRequest) {
+  const auth = await validateApiKey(req);
+  if (auth.error) return auth.error;
+
   try {
     const results = [];
 

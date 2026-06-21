@@ -27,8 +27,10 @@ export default function IncidentList({ mode, color }: Props) {
 
   useEffect(() => {
     setLoading(true);
-    const statusParam = filter === "all" ? "" : `&status=${filter}`;
-    fetch(`/api/incidents?mode=${mode}${statusParam}`)
+    const safeMode = encodeURIComponent(mode);
+    const safeStatus = encodeURIComponent(filter === "all" ? "" : filter);
+    const statusParam = safeStatus ? `&status=${safeStatus}` : "";
+    fetch(`/api/incidents?mode=${safeMode}${statusParam}`)
       .then((r) => r.json())
       .then((d) => setIncidents(d.incidents || []))
       .catch(() => {})
@@ -40,7 +42,7 @@ export default function IncidentList({ mode, color }: Props) {
     setExpanded(id);
     setLoadingMemories(true);
     try {
-      const res = await fetch(`/api/incidents?id=${id}`);
+      const res = await fetch(`/api/incidents?id=${encodeURIComponent(id)}`);
       const data = await res.json();
       setMemories(data.memories || []);
     } catch { setMemories([]); }

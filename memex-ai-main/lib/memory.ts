@@ -9,6 +9,52 @@ import type {
 } from "@/types";
 import { randomUUID } from "crypto";
 
+// ─── RATE LIMITER ──────────────────────────────────────────────
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+
+const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
+const RATE_LIMIT_MAX_INGEST = 30; // max ingest calls per IP per minute
+const RATE_LIMIT_MAX_QUERY = 20; // max query calls per IP per minute
+
+function checkRateLimit(
+  key: string,
+  maxRequests: number
+): { allowed: boolean; retryAfterMs: number } {
+  const now = Date.now();
+  const entry = rateLimitMap.get(key);
+
+  if (!entry || now >= entry.resetAt) {
+    rateLimitMap.set(key, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+    return { allowed: true, retryAfterMs: 0 };
+  }
+
+  if (entry.count >= maxRequests) {
+    return { allowed: false, retryAfterMs: entry.resetAt - now };
+  }
+
+  entry.count += 1;
+  return { allowed: true, retryAfterMs: 0 };
+}
+
+// Periodically clean up expired entries to prevent memory leaks
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of rateLimitMap.entries()) {
+    if (now >= entry.resetAt) {
+      rateLimitMap.delete(key);
+    }
+  }
+}, 5 * 60 * 1000);
+
+export class RateLimitError extends Error {
+  retryAfterMs: number;
+  constructor(retryAfterMs: number) {
+    super(`Rate limit exceeded. Retry after ${Math.ceil(retryAfterMs / 1000)} seconds.`);
+    this.name = "RateLimitError";
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
 // ─── EMBED ─────────────────────────────────────────────────────
 async function embed(text: string): Promise<number[]> {
   const response = await openai.embeddings.create({
@@ -19,7 +65,19 @@ async function embed(text: string): Promise<number[]> {
 }
 
 // ─── INGEST (with incident clustering + alerts) ────────────────
-export async function ingest(entry: IngestPayload): Promise<IngestResult> {
+export async function ingest(
+  entry: IngestPayload,
+  clientIp: string = "global"
+): Promise<IngestResult> {
+  const rateLimitKey = `ingest:${clientIp}`;
+  const { allowed, retryAfterMs } = checkRateLimit(
+    rateLimitKey,
+    RATE_LIMIT_MAX_INGEST
+  );
+  if (!allowed) {
+    throw new RateLimitError(retryAfterMs);
+  }
+
   const embedding = await embed(entry.content);
 
   let incident_id = randomUUID();
@@ -96,8 +154,18 @@ export async function query(
   question: string,
   mode: string,
   matchCount: number = 10,
-  threshold: number = 0.25
+  threshold: number = 0.25,
+  clientIp: string = "global"
 ): Promise<QueryResult> {
+  const rateLimitKey = `query:${clientIp}`;
+  const { allowed, retryAfterMs } = checkRateLimit(
+    rateLimitKey,
+    RATE_LIMIT_MAX_QUERY
+  );
+  if (!allowed) {
+    throw new RateLimitError(retryAfterMs);
+  }
+
   const queryEmbedding = await embed(question);
   const filterType =
     mode === "sentry" ? "error" : mode === "comcast" ? "network" : "api";

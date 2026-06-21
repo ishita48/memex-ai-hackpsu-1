@@ -19,7 +19,7 @@ async function embed(text: string): Promise<number[]> {
 }
 
 // ─── INGEST (with incident clustering + alerts) ────────────────
-export async function ingest(entry: IngestPayload): Promise<IngestResult> {
+export async function ingest(entry: IngestPayload, tenantId: string): Promise<IngestResult> {
   const embedding = await embed(entry.content);
 
   let incident_id = randomUUID();
@@ -32,16 +32,44 @@ export async function ingest(entry: IngestPayload): Promise<IngestResult> {
   });
 
   if (similar && similar.length > 0 && similar[0].incident_id) {
-    incident_id = similar[0].incident_id;
-    is_new_incident = false;
-
-    await supabase
+    // Verify the similar incident belongs to this tenant
+    const { data: existingIncident } = await supabase
       .from("incidents")
-      .update({
-        last_seen: new Date().toISOString(),
+      .select("id")
+      .eq("id", similar[0].incident_id)
+      .eq("tenant_id", tenantId)
+      .single();
+
+    if (existingIncident) {
+      incident_id = similar[0].incident_id;
+      is_new_incident = false;
+
+      await supabase
+        .from("incidents")
+        .update({
+          last_seen: new Date().toISOString(),
+          severity: entry.metadata.severity || "medium",
+        })
+        .eq("id", incident_id)
+        .eq("tenant_id", tenantId);
+    } else {
+      // No matching tenant-owned incident; create a new one
+      const title =
+        entry.metadata.title ||
+        entry.content.slice(0, 120).split("\n")[0];
+
+      await supabase.from("incidents").insert({
+        id: incident_id,
+        type: entry.type,
+        title,
         severity: entry.metadata.severity || "medium",
-      })
-      .eq("id", incident_id);
+        status: "open",
+        first_seen: new Date().toISOString(),
+        last_seen: new Date().toISOString(),
+        metadata: { source: entry.source },
+        tenant_id: tenantId,
+      });
+    }
   } else {
     const title =
       entry.metadata.title ||
@@ -56,6 +84,7 @@ export async function ingest(entry: IngestPayload): Promise<IngestResult> {
       first_seen: new Date().toISOString(),
       last_seen: new Date().toISOString(),
       metadata: { source: entry.source },
+      tenant_id: tenantId,
     });
   }
 
@@ -68,6 +97,7 @@ export async function ingest(entry: IngestPayload): Promise<IngestResult> {
       metadata: entry.metadata,
       embedding,
       incident_id,
+      tenant_id: tenantId,
       created_at: new Date().toISOString(),
     })
     .select("id")
@@ -84,6 +114,7 @@ export async function ingest(entry: IngestPayload): Promise<IngestResult> {
       severity: sev,
       title: entry.metadata.title || entry.content.slice(0, 80),
       message: `${sev.toUpperCase()} severity event from ${entry.source}`,
+      tenant_id: tenantId,
     });
     alert_triggered = true;
   }
@@ -95,6 +126,7 @@ export async function ingest(entry: IngestPayload): Promise<IngestResult> {
 export async function query(
   question: string,
   mode: string,
+  tenantId: string,
   matchCount: number = 10,
   threshold: number = 0.25
 ): Promise<QueryResult> {
@@ -110,6 +142,7 @@ export async function query(
       match_threshold: threshold,
       match_count: matchCount,
       filter_type: filterType,
+      filter_tenant_id: tenantId,
     }
   );
 
@@ -174,7 +207,8 @@ Be concrete and technical. Reference specific services, commits, metrics, and ti
     const { data: incidentData } = await supabase
       .from("incidents")
       .select("*")
-      .in("id", incidentIds.slice(0, 3));
+      .in("id", incidentIds.slice(0, 3))
+      .eq("tenant_id", tenantId);
     if (incidentData && incidentData.length > 1) {
       pattern = `${incidentData.length} related incidents detected spanning ${formatSpan(incidentData)}`;
     }
@@ -191,6 +225,7 @@ Be concrete and technical. Reference specific services, commits, metrics, and ti
 // ─── BROWSE ────────────────────────────────────────────────────
 export async function browse(
   type: string,
+  tenantId: string,
   limit: number = 20
 ): Promise<Memory[]> {
   const filterType =
@@ -202,6 +237,7 @@ export async function browse(
       "id, type, source, content, metadata, incident_id, feedback_score, resolved, created_at"
     )
     .eq("type", filterType)
+    .eq("tenant_id", tenantId)
     .order("created_at", { ascending: false })
     .limit(limit);
 
@@ -212,6 +248,7 @@ export async function browse(
 // ─── INCIDENTS ─────────────────────────────────────────────────
 export async function getIncidents(
   mode: string,
+  tenantId: string,
   status?: string
 ): Promise<Incident[]> {
   const filterType =
@@ -220,6 +257,7 @@ export async function getIncidents(
   const { data, error } = await supabase.rpc("get_incidents", {
     filter_type: filterType,
     filter_status: status || null,
+    filter_tenant_id: tenantId,
     result_limit: 20,
   });
 
@@ -228,7 +266,8 @@ export async function getIncidents(
 }
 
 export async function getIncidentMemories(
-  incidentId: string
+  incidentId: string,
+  tenantId: string
 ): Promise<Memory[]> {
   const { data, error } = await supabase
     .from("memories")
@@ -236,6 +275,7 @@ export async function getIncidentMemories(
       "id, type, source, content, metadata, incident_id, feedback_score, resolved, created_at"
     )
     .eq("incident_id", incidentId)
+    .eq("tenant_id", tenantId)
     .order("created_at", { ascending: false });
 
   if (error) throw new Error(`Incident memories failed: ${error.message}`);
@@ -244,6 +284,7 @@ export async function getIncidentMemories(
 
 export async function updateIncidentStatus(
   incidentId: string,
+  tenantId: string,
   status: string,
   rootCause?: string,
   fix?: string
@@ -255,7 +296,8 @@ export async function updateIncidentStatus(
   const { error } = await supabase
     .from("incidents")
     .update(update)
-    .eq("id", incidentId);
+    .eq("id", incidentId)
+    .eq("tenant_id", tenantId);
 
   if (error) throw new Error(`Update failed: ${error.message}`);
 }
@@ -263,31 +305,38 @@ export async function updateIncidentStatus(
 // ─── FEEDBACK ──────────────────────────────────────────────────
 export async function submitFeedback(
   memoryId: string,
+  tenantId: string,
   delta: number
 ): Promise<void> {
   const { data } = await supabase
     .from("memories")
     .select("feedback_score")
     .eq("id", memoryId)
+    .eq("tenant_id", tenantId)
     .single();
+
+  if (!data) throw new Error(`Feedback failed: memory not found or access denied`);
 
   const current = data?.feedback_score || 0;
 
   const { error } = await supabase
     .from("memories")
     .update({ feedback_score: current + delta })
-    .eq("id", memoryId);
+    .eq("id", memoryId)
+    .eq("tenant_id", tenantId);
 
   if (error) throw new Error(`Feedback failed: ${error.message}`);
 }
 
 // ─── ALERTS ────────────────────────────────────────────────────
 export async function getAlerts(
+  tenantId: string,
   acknowledged?: boolean
 ): Promise<any[]> {
   let q = supabase
     .from("alerts")
     .select("*")
+    .eq("tenant_id", tenantId)
     .order("created_at", { ascending: false })
     .limit(20);
 
@@ -300,11 +349,12 @@ export async function getAlerts(
   return data;
 }
 
-export async function acknowledgeAlert(alertId: string): Promise<void> {
+export async function acknowledgeAlert(alertId: string, tenantId: string): Promise<void> {
   const { error } = await supabase
     .from("alerts")
     .update({ acknowledged: true })
-    .eq("id", alertId);
+    .eq("id", alertId)
+    .eq("tenant_id", tenantId);
 
   if (error) throw new Error(`Ack failed: ${error.message}`);
 }
@@ -312,6 +362,7 @@ export async function acknowledgeAlert(alertId: string): Promise<void> {
 // ─── RESOLVE MEMORY ────────────────────────────────────────────
 export async function resolveMemory(
   memoryId: string,
+  tenantId: string,
   resolvedBy?: string
 ): Promise<void> {
   const { error } = await supabase
@@ -321,7 +372,8 @@ export async function resolveMemory(
       resolved_at: new Date().toISOString(),
       resolved_by: resolvedBy || "dashboard",
     })
-    .eq("id", memoryId);
+    .eq("id", memoryId)
+    .eq("tenant_id", tenantId);
 
   if (error) throw new Error(`Resolve failed: ${error.message}`);
 }

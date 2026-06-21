@@ -100,16 +100,32 @@ export default function IngestPanel({ color, mode, onIngest }: IngestPanelProps)
     setBulkCount(0);
 
     try {
+      const MAX_SIZE = 10 * 1024 * 1024; // 10 MB
+      if (file.size > MAX_SIZE) throw new Error("File too large (max 10 MB)");
+
       const text = await file.text();
       let entries: any[] = [];
 
       if (file.name.endsWith(".json")) {
         const parsed = JSON.parse(text);
-        entries = Array.isArray(parsed) ? parsed : [parsed];
+        const raw = Array.isArray(parsed) ? parsed : [parsed];
+        if (raw.length > 10000) throw new Error("Too many entries (max 10,000)");
+        // Only extract known safe fields — no arbitrary spread
+        entries = raw.map(({ content, message, text: t, source, service, severity, level, status }: any) => ({
+          content,
+          message,
+          text: t,
+          source,
+          service,
+          severity,
+          level,
+          status,
+        }));
       } else if (file.name.endsWith(".csv")) {
         entries = parseCSV(text);
       } else if (file.name.endsWith(".txt") || file.name.endsWith(".log")) {
         const chunks = text.split(/\n{2,}|---+|\*{3,}/).filter((c) => c.trim());
+        if (chunks.length > 10000) throw new Error("Too many entries (max 10,000)");
         entries = chunks.map((chunk) => ({ content: chunk.trim(), source: file.name }));
       } else {
         throw new Error("Supported formats: .json, .csv, .txt, .log");
@@ -119,16 +135,15 @@ export default function IngestPanel({ color, mode, onIngest }: IngestPanelProps)
       for (const entry of entries) {
         const entryContent = entry.content || entry.message || entry.text || JSON.stringify(entry);
         const entrySource = entry.source || entry.service || file.name;
+        // Build metadata only from known safe fields — no arbitrary spread
         const metadata: Record<string, any> = {
-          ...entry,
           severity: entry.severity || entry.level || "medium",
           status: entry.status || "new",
           ingested_via: "dashboard-upload",
           filename: file.name,
         };
-        delete metadata.content;
-        delete metadata.message;
-        delete metadata.text;
+        if (entry.source) metadata.source = String(entry.source);
+        if (entry.service) metadata.service = String(entry.service);
 
         await onIngest(entryContent, entrySource, metadata);
         ingested++;
@@ -248,7 +263,7 @@ export default function IngestPanel({ color, mode, onIngest }: IngestPanelProps)
               <span className="text-[11px] font-bold text-[#888] uppercase tracking-widest">Upload File</span>
             </div>
             <p className="text-[11px] text-[#555] mb-3 leading-relaxed">
-              Upload <span className="text-[#888]">.json</span>, <span className="text-[#888]">.csv</span>, <span className="text-[#888]">.txt</span>, or <span className="text-[#888]">.log</span> files. Each entry becomes a separate memory.
+              Upload <span className="text-[#888]">.json</span>, <span className="text-[#888]">.csv</span>, <span className="text-[#888]">.txt</span>, or <span className="text-[#888]">.log</span> files. Each entry becomes a separate memory. Max 10 MB per file.
             </p>
             <div className="mb-3 grid gap-2 text-[10px] font-mono text-[#666]">
               <div className="p-2 rounded bg-[#08080a] border border-[#1a1a1f]">

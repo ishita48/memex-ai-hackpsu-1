@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { getCsrfToken } from "@/lib/csrf";
 
 interface Props { color: string; }
 
@@ -24,7 +25,10 @@ export default function AlertBanner({ color }: Props) {
   const acknowledge = async (id: string) => {
     await fetch("/api/alerts", {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRF-Token": getCsrfToken(),
+      },
       body: JSON.stringify({ id }),
     });
     setAlerts((prev) => prev.map((a) => (a.id === id ? { ...a, acknowledged: true } : a)));
@@ -34,7 +38,10 @@ export default function AlertBanner({ color }: Props) {
     for (const a of alerts.filter((a) => !a.acknowledged)) {
       await fetch("/api/alerts", {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-Token": getCsrfToken(),
+        },
         body: JSON.stringify({ id: a.id }),
       });
     }

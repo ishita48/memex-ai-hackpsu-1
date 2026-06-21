@@ -99,6 +99,8 @@ export default function IngestPanel({ color, mode, onIngest }: IngestPanelProps)
     setStatus("loading");
     setBulkCount(0);
 
+    const MAX_ENTRIES = 500;
+
     try {
       const text = await file.text();
       let entries: any[] = [];
@@ -113,6 +115,10 @@ export default function IngestPanel({ color, mode, onIngest }: IngestPanelProps)
         entries = chunks.map((chunk) => ({ content: chunk.trim(), source: file.name }));
       } else {
         throw new Error("Supported formats: .json, .csv, .txt, .log");
+      }
+
+      if (entries.length > MAX_ENTRIES) {
+        throw new Error(`Too many entries (${entries.length}). Maximum allowed is ${MAX_ENTRIES}.`);
       }
 
       let ingested = 0;
@@ -133,6 +139,11 @@ export default function IngestPanel({ color, mode, onIngest }: IngestPanelProps)
         await onIngest(entryContent, entrySource, metadata);
         ingested++;
         setBulkCount(ingested);
+
+        // Throttle: small delay every 10 entries to avoid overwhelming the backend
+        if (ingested % 10 === 0) {
+          await new Promise((r) => setTimeout(r, 200));
+        }
       }
 
       setStatus("success");
@@ -248,7 +259,7 @@ export default function IngestPanel({ color, mode, onIngest }: IngestPanelProps)
               <span className="text-[11px] font-bold text-[#888] uppercase tracking-widest">Upload File</span>
             </div>
             <p className="text-[11px] text-[#555] mb-3 leading-relaxed">
-              Upload <span className="text-[#888]">.json</span>, <span className="text-[#888]">.csv</span>, <span className="text-[#888]">.txt</span>, or <span className="text-[#888]">.log</span> files. Each entry becomes a separate memory.
+              Upload <span className="text-[#888]">.json</span>, <span className="text-[#888]">.csv</span>, <span className="text-[#888]">.txt</span>, or <span className="text-[#888]">.log</span> files. Each entry becomes a separate memory. Maximum 500 entries per file.
             </p>
             <div className="mb-3 grid gap-2 text-[10px] font-mono text-[#666]">
               <div className="p-2 rounded bg-[#08080a] border border-[#1a1a1f]">

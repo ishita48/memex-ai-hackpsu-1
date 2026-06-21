@@ -4,15 +4,6 @@ import { supabase } from "./supabase";
 export async function validateApiKey(
   req: NextRequest
 ): Promise<{ userId?: string; error?: NextResponse }> {
-  const origin = req.headers.get("origin") || "";
-  const referer = req.headers.get("referer") || "";
-  const host = req.headers.get("host") || "";
-
-  // Dashboard requests bypass auth
-  if (origin.includes(host) || referer.includes(host) || origin === "") {
-    return { userId: "dashboard" };
-  }
-
   const apiKey =
     req.headers.get("x-api-key") ||
     req.headers.get("authorization")?.replace("Bearer ", "") ||

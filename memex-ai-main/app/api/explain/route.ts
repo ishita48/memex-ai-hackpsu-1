@@ -1,8 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { openai } from "@/lib/openai";
+import { Ratelimit } from "@upstash/ratelimit";
+import { kv } from "@vercel/kv";
+
+const ratelimit = new Ratelimit({
+  redis: kv,
+  limiter: Ratelimit.slidingWindow(20, "1 m"),
+});
 
 export async function POST(req: NextRequest) {
   try {
+    const ip = req.ip ?? req.headers.get("x-forwarded-for") ?? "unknown";
+    const { success } = await ratelimit.limit(ip);
+    if (!success) {
+      return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
+    }
+
     const { code, filename, language, type } = await req.json();
 
     if (!code) {

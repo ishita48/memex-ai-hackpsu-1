@@ -9,6 +9,23 @@ import type {
 } from "@/types";
 import { randomUUID } from "crypto";
 
+// ─── SANITIZATION HELPERS ──────────────────────────────────────
+const VALID_SEVERITIES = new Set(['critical', 'high', 'medium', 'low']);
+
+function sanitizeSeverity(raw: any): string {
+  const rawSeverity = String(raw || '').toLowerCase();
+  return VALID_SEVERITIES.has(rawSeverity) ? rawSeverity : 'medium';
+}
+
+function sanitizeTitle(raw: any, fallback: string): string {
+  const rawTitle = raw || fallback;
+  return String(rawTitle).slice(0, 200).replace(/[\x00-\x1F]/g, '');
+}
+
+function sanitizeSource(raw: any): string {
+  return String(raw || '').slice(0, 100).replace(/[\x00-\x1F]/g, '');
+}
+
 // ─── EMBED ─────────────────────────────────────────────────────
 async function embed(text: string): Promise<number[]> {
   const response = await openai.embeddings.create({
@@ -31,6 +48,8 @@ export async function ingest(entry: IngestPayload): Promise<IngestResult> {
     filter_type: entry.type,
   });
 
+  const severity = sanitizeSeverity(entry.metadata.severity);
+
   if (similar && similar.length > 0 && similar[0].incident_id) {
     incident_id = similar[0].incident_id;
     is_new_incident = false;
@@ -39,23 +58,24 @@ export async function ingest(entry: IngestPayload): Promise<IngestResult> {
       .from("incidents")
       .update({
         last_seen: new Date().toISOString(),
-        severity: entry.metadata.severity || "medium",
+        severity,
       })
       .eq("id", incident_id);
   } else {
-    const title =
-      entry.metadata.title ||
-      entry.content.slice(0, 120).split("\n")[0];
+    const title = sanitizeTitle(
+      entry.metadata.title,
+      entry.content.slice(0, 120).split("\n")[0]
+    );
 
     await supabase.from("incidents").insert({
       id: incident_id,
       type: entry.type,
       title,
-      severity: entry.metadata.severity || "medium",
+      severity,
       status: "open",
       first_seen: new Date().toISOString(),
       last_seen: new Date().toISOString(),
-      metadata: { source: entry.source },
+      metadata: { source: sanitizeSource(entry.source) },
     });
   }
 
@@ -76,14 +96,17 @@ export async function ingest(entry: IngestPayload): Promise<IngestResult> {
   if (error) throw new Error(`Ingest failed: ${error.message}`);
 
   let alert_triggered = false;
-  const sev = (entry.metadata.severity || "").toLowerCase();
-  if (sev === "critical" || sev === "high") {
+  if (severity === "critical" || severity === "high") {
+    const alertTitle = sanitizeTitle(
+      entry.metadata.title,
+      entry.content.slice(0, 80)
+    );
     await supabase.from("alerts").insert({
       incident_id,
       memory_id: data.id,
-      severity: sev,
-      title: entry.metadata.title || entry.content.slice(0, 80),
-      message: `${sev.toUpperCase()} severity event from ${entry.source}`,
+      severity,
+      title: alertTitle,
+      message: `${severity.toUpperCase()} severity event from ${sanitizeSource(entry.source)}`,
     });
     alert_triggered = true;
   }

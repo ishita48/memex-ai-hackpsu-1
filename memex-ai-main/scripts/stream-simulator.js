@@ -59,6 +59,12 @@ const ALL_LOGS = [
 ];
 
 async function sendLog() {
+  const ingestApiKey = process.env.INGEST_API_KEY;
+  if (!ingestApiKey) {
+    console.error("Error: INGEST_API_KEY environment variable is not set.");
+    process.exit(1);
+  }
+
   const log = ALL_LOGS[Math.floor(Math.random() * ALL_LOGS.length)];
   const variation = {
     ...log,
@@ -69,7 +75,10 @@ async function sendLog() {
   try {
     const res = await fetch(`${BASE_URL}/api/ingest`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${ingestApiKey}`,
+      },
       body: JSON.stringify(variation),
     });
     const data = await res.json();
